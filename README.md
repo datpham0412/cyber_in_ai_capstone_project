@@ -1,6 +1,6 @@
 # 🔦 Membership Inference Attacks against Large Vision-Language Models
 
-This repository provides an official implementation Membership Inference Attacks against Large Vision-Language Models.
+This repository provides an official implementation Membership Inference Attacks against Large Vision-Language Models hello.
 
 ## 🔍 Overview
 
