@@ -27,24 +27,46 @@ from scipy.stats import entropy
 import statistics
 
 import torch.nn as nn
-import logging
-logging.basicConfig(level='ERROR')
 import numpy as np
 from pathlib import Path
 import torch
 import zlib
 from tqdm import tqdm
 import numpy as np
-from datasets import load_dataset
+from datasets import load_from_disk
 from eval import *
 
 import sys
 # sys.path.insert(0, '../')
 from metric_util import get_text_metric, get_img_metric, save_output, convert, get_meta_metrics
 
+# ======================================================================================================================== #
+
+import logging
+import sys
+
+# Set up logger to output only to stdout (no file)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Clear any default handlers (prevent duplication)
+logger.handlers = []
+
+# Create a single StreamHandler to stdout
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] - %(message)s'))
+
+# Add handler to logger
+logger.addHandler(stream_handler)
+
+# Optional: test
+logger.info("Logging initialized. Output will be captured in SLURM log.")
+
+# ======================================================================================================================== #
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="liuhaotian/llava-v1.5-7b")
+    parser.add_argument("--model-path", type=str, default="/fred/oz402/aho/VLLM-MIA/target_models/llava-v1.5-7b")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--conv-mode", type=str, default=None)
     parser.add_argument("--sep", type=str, default=",")
@@ -53,8 +75,8 @@ def parse_args():
     parser.add_argument("--num_beams", type=int, default=1)
     parser.add_argument("--num_gen_token", type=int, default=32)
     parser.add_argument("--gpu_id",type=int,default=0)
-    parser.add_argument("--dataset", type=str, default='img_Flickr')
-    parser.add_argument("--output_dir", type=str, default="image_MIA")
+    parser.add_argument("--dataset", type=str, default='/fred/oz402/aho/VLLM-MIA/Data/img_Flickr')
+    parser.add_argument("--output_dir", type=str, default="/fred/oz402/aho/VLLM-MIA/Result/image_MIA")
     parser.add_argument("--severity", type=int, default=6)
     args = parser.parse_args()
     return args
@@ -65,11 +87,12 @@ def load_image(image_file):
         return image_file.convert("RGB")  
     
     if isinstance(image_file, str) and (image_file.startswith("http") or image_file.startswith("https")):
-        response = requests.get(image_file)
-        image = Image.open(BytesIO(response.content)).convert("RGB")
+        # response = requests.get(image_file)
+        # image = Image.open(BytesIO(response.content)).convert("RGB")
+        logger.warning("Internet access detected. Skipping image loading from URL.")
+        return None
     else:
         image = Image.open(image_file).convert("RGB")
-    
     
     return image
 
@@ -130,12 +153,15 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
     all_output = []
     test_data = test_data
 
-    for ex in tqdm(test_data): 
+    for idx, ex in enumerate(tqdm(test_data)):
         description = generate_text(model, image_processor, conv_mode, ex['image'], text, gpu_id, num_gen_token)
         # description = ''
         new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id)
 
         all_output.append(new_ex)
+
+        if idx % 10 == 0:
+            logger.info(f"Processed {idx+1}/{len(test_data)} samples")
 
     return all_output
 
@@ -291,8 +317,9 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
 # ========================================
 
 if __name__ == '__main__':
-
+    logger.info(f"Parsing Arguments")
     args = parse_args()
+    logger.info(f"Parsed Arguments: {args}")
     num_gen_token = args.num_gen_token
     dataset = args.dataset
 
@@ -303,9 +330,13 @@ if __name__ == '__main__':
     disable_torch_init()
 
     model_name = get_model_name_from_path(args.model_path)
+    logger.info(f"Model name: {model_name}")
+    
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
     )
+    logger.info(f"Loaded model from {args.model_path}")
+
     conv_mode = load_conversation_template(model_name)
 
     if args.conv_mode is not None and conv_mode != args.conv_mode:
@@ -317,16 +348,20 @@ if __name__ == '__main__':
     else:
         args.conv_mode = conv_mode
 
-    dataset = load_dataset("JaineLi/VL-MIA-image", dataset, split='train')
+    logger.info(f"Loading dataset")
+    dataset = load_from_disk(args.dataset)
+    logger.info(f"Loaded dataset from {args.dataset}")
+
     data = convert_huggingface_data_to_list_dic(dataset)
 
-    output_dir = f"{args.output_dir}/{args.dataset}/gen_{num_gen_token}_tokens"
+    output_dir = f"{args.output_dir}/gen_{num_gen_token}_tokens"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    logging.info('=======Initialization Finished=======')
+    logger.info('=======Initialization Finished=======')
 
     text = 'Describe this image concisely.'
 
+    logger.info("Starting evaluation...")
     all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token)
 
     fig_fpr_tpr_img(all_output, output_dir)
