@@ -33,11 +33,35 @@ from tqdm import tqdm
 import numpy as np
 from eval import *
 import pdb
-from datasets import load_dataset
+from datasets import load_from_disk
 
 import sys
 # sys.path.insert(0, '../')
 from metric_util import get_text_metric, get_img_metric, save_output, get_meta_metrics
+
+# ======================================================================================================================== #
+
+import logging
+import sys
+
+# Set up logger to output only to stdout (no file)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Clear any default handlers (prevent duplication)
+logger.handlers = []
+
+# Create a single StreamHandler to stdout
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] - %(message)s'))
+
+# Add handler to logger
+logger.addHandler(stream_handler)
+
+# Optional: test
+logger.info("Logging initialized. Output will be captured in SLURM log.")
+
+# ======================================================================================================================== #
 
 def shuffle_sentence(sentence):
     words = sentence.split()
@@ -47,15 +71,15 @@ def shuffle_sentence(sentence):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="liuhaotian/llava-v1.5-7b")
+    parser.add_argument("--model-path", type=str, default="/fred/oz402/aho/VLLM-MIA/target_models/llava-v1.5-7b")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--conv-mode", type=str, default=None)
     parser.add_argument("--sep", type=str, default=",")
     parser.add_argument("--temperature", type=float, default=0)
     parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--num_beams", type=int, default=1)
-    parser.add_argument('--output_dir', type=str, default="text_MIA")
-    parser.add_argument('--dataset', type=str, default="llava_v15_gpt_text")
+    parser.add_argument('--output_dir', type=str, default="/fred/oz402/aho/VLLM-MIA/Result/text_MIA")
+    parser.add_argument('--dataset', type=str, default="/fred/oz402/aho/VLLM-MIA/Data/llava_v15_gpt_text")
     parser.add_argument("--gpu_id",type=int,default=0)
     parser.add_argument("--text_len", type=int, default=32)
     args = parser.parse_args()
@@ -64,8 +88,10 @@ def parse_args():
 
 def load_image(image_file):
     if image_file.startswith("http") or image_file.startswith("https"):
-        response = requests.get(image_file)
-        image = Image.open(BytesIO(response.content)).convert("RGB")
+        # response = requests.get(image_file)
+        # image = Image.open(BytesIO(response.content)).convert("RGB")
+        logger.warning("Internet access detected. Skipping image loading from URL.")
+        return None
     else:
         image = Image.open(image_file).convert("RGB")
     return image
@@ -84,12 +110,15 @@ def evaluate_data(model, image_processor, conv_mode, test_data, col_name, gpu_id
     all_output = []
     test_data = test_data
 
-    for ex in tqdm(test_data): 
+    for idx, ex in enumerate(tqdm(test_data)):
         img = Image.new('RGB', (1024, 1024), color = 'black')
         text = ex[col_name]
         new_ex = inference(model, image_processor, conv_mode, img, text, ex, gpu_id)
 
         all_output.append(new_ex)
+
+        if idx % 10 == 0:
+            logger.info(f"Processed {idx+1}/{len(test_data)} samples")
 
     return all_output
 
@@ -221,15 +250,21 @@ def mod_infer(model, image_processor, conv_mode, img, description, gpu_id):
 
 if __name__ == '__main__':
 
+    logger.info(f"Parsing Arguments")
     args = parse_args()
+    logger.info(f"Parsed Arguments: {args}")
 
     # Model
     disable_torch_init()
 
     model_name = get_model_name_from_path(args.model_path)
+    logger.info(f"Model name: {model_name}")
+
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
     )
+    logger.info(f"Loaded model from {args.model_path}")
+
     conv_mode = load_conversation_template(model_name)
 
     if args.conv_mode is not None and conv_mode != args.conv_mode:
@@ -245,11 +280,15 @@ if __name__ == '__main__':
     output_dir = f"{args.output_dir}/length_{text_len}"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    dataset = load_dataset("JaineLi/VL-MIA-text", args.dataset, split=f"length_{text_len}")
+    logger.info(f"Loading dataset")
+    dataset = load_from_disk(args.dataset)
+    logger.info(f"Loaded dataset from {args.dataset}")
+
     data = convert_huggingface_data_to_list_dic(dataset)
 
-    logging.info('=======Initialization Finished=======')
+    logger.info('=======Initialization Finished=======')
 
+    logger.info("Starting evaluation...")
     all_output = evaluate_data(model, image_processor, conv_mode, data, 'input', args.gpu_id)
 
     fig_fpr_tpr(all_output, output_dir)
