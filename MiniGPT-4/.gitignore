@@ -181,3 +181,6 @@ sbatch_generate*
 eval_data/
 dataset/Evaluation.md
 jupyter_notebook.slurm
+
+
+.bin
