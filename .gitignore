@@ -44,4 +44,4 @@ target_models/pretrained/clip-vit-large-patch14-336/*
 !target_models/pretrained/clip-vit-large-patch14-336/.gitkeep
 
 #vicuna_weights_minigpt
-/fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/MiniGPT-4/vicuna_weights/*
+MiniGPT-4/vicuna_weights/*
