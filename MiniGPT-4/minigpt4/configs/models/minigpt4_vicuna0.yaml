@@ -15,7 +15,7 @@ model:
   # generation configs
   prompt: ""
 
-  llama_model: "please set this value to the path of vicuna model"
+  llama_model: "/fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/MiniGPT-4/vicuna_weights"
 
 preprocess:
     vis_processor:
