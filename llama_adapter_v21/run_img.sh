@@ -1,6 +1,6 @@
 #!/bin/bash
 # ---------------- Slurm directives ----------------
-#SBATCH --job-name=vlmia_img_Flickr
+#SBATCH --job-name=vlmia_img_DallE
 #SBATCH --output=vlmia_img_%j.out      # stdout   → vlmia_img_<jobid>.out
 #SBATCH --error=vlmia_img_%j.err       # stderr   → vlmia_img_<jobid>.err
 #SBATCH --partition=gpu
@@ -13,9 +13,11 @@
 # ====== user‑editable section =========================================
 GPU_ID=0
 NUM_GEN=32
-DATASET_SPLIT=img_Flickr                     # argument to --dataset
+# DATASET_SPLIT=img_Flickr                  # uncommented for img_Flickr
+DATASET_SPLIT=img_dalle                     # argument to --dataset
 LLAMA_WEIGHTS=../llama_weights               # folder with 7B weights
-ARROW_FOLDER=/fred/oz402/tiend/VL-MIA-image-arrow   # local on‑disk dataset
+# ARROW_FOLDER=/fred/oz402/tiend/VL-MIA-image-arrow   # local on‑disk dataset - uncommented for img_Flickr
+ARROW_FOLDER=/fred/oz402/tiend/VL-MIA-image-arro/img_dalle   # local on‑disk dataset
 PY_SCRIPT=/fred/oz402/tiend/VLLM-MIA/llama_adapter_v21/run_with_img.py
 # =====================================================================
 
