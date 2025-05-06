@@ -75,8 +75,8 @@ def parse_args():
     parser.add_argument("--num_beams", type=int, default=1)
     parser.add_argument("--num_gen_token", type=int, default=32)
     parser.add_argument("--gpu_id",type=int,default=0)
-    parser.add_argument("--dataset", type=str, default='/fred/oz402/aho/VLLM-MIA/Data/img_Flickr')
-    parser.add_argument("--output_dir", type=str, default="/fred/oz402/aho/VLLM-MIA/Result/image_MIA")
+    parser.add_argument("--dataset", type=str, default='/fred/oz402/aho/VLLM-MIA/Data/img_dalle')
+    parser.add_argument("--output_dir", type=str, default="/fred/oz402/aho/VLLM-MIA/Result/image_dalle_MIA")
     parser.add_argument("--severity", type=int, default=6)
     args = parser.parse_args()
     return args
