@@ -26,7 +26,6 @@ import numpy as np
 from datasets import load_dataset
 
 import llama
-import cv2
 
 import sys
 sys.path.insert(0,'../')
@@ -36,17 +35,16 @@ from eval import *
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Demo")
-    parser.add_argument("--llama_path",
-                        default = "")
-    parser.add_argument("--gpu_id",
-                        type=int,
-                        default=0,
-                        help="specify the gpu to load the model.")
+    parser.add_argument("--llama_path", default="")
+    parser.add_argument("--gpu_id", type=int, default=0)
     parser.add_argument("--text_len", type=int, default=32)
-    parser.add_argument('--dataset', type=str, default="llava_v15_gpt_text")
-    parser.add_argument('--output_dir', type=str, default="text_MIA")
-    args = parser.parse_args()
-    return args
+    parser.add_argument("--dataset", type=str, default="llava_v15_gpt_text")
+    parser.add_argument("--output_dir", type=str, default="text_MIA")
+    # NEW: local path to the on-disk dataset
+    parser.add_argument("--data_path",
+                        default="/fred/oz402/tiend/VL-MIA-text-arrow",
+                        help="folder produced by datasets.save_to_disk(...)")
+    return parser.parse_args()
 
 
 def evaluate_data(model, test_data, col_name, gpu_id):
@@ -168,14 +166,38 @@ if __name__ == '__main__':
     device = 'cuda:{}'.format(args.gpu_id)
 
     # choose from BIAS-7B, LORA-BIAS-7B, LORA-BIAS-7B-v21
-    model, preprocess = llama.load("LORA-BIAS-7B-v21", llama_dir, llama_type="7B", device=device)
+    model, preprocess = llama.load(
+        "LORA-BIAS-7B-v21",
+        llama_dir, llama_type="7B",
+        device="cpu")
+
+    # 2) cast LLAMA and adapter parts to fp16
+    def cast_llama_submodules_to_fp16(m):
+        for n, p in m.named_parameters():
+            if n.startswith("llama.") or n.startswith(("visual_", "adapter_")):
+                p.data = p.data.half()
+        for n, b in m.named_buffers():
+            if n.startswith("llama.") or n.startswith(("visual_", "adapter_")):
+                b.data = b.data.half()
+
+    cast_llama_submodules_to_fp16(model)
+
+    model.clip.float()        # keep CLIP vision encoder in fp32
+    model.to(f"cuda:{args.gpu_id}")   # finally move everything to the GPU
     model.eval()
 
     text_len = args.text_len
     output_dir = f"{args.output_dir}/length_{text_len}"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    dataset = load_dataset("JaineLi/VL-MIA-text", args.dataset, split=f"length_{text_len}")
+    from datasets import load_from_disk, load_dataset
+
+    try:
+        dataset = load_from_disk(args.data_path)[f"length_{args.text_len}"]
+    except (FileNotFoundError, OSError):
+        dataset = load_dataset("JaineLi/VL-MIA-text",
+                            args.dataset,
+                            split=f"length_{args.text_len}")
     data = convert_huggingface_data_to_list_dic(dataset)
 
     logging.info('=======Initialization Finished=======')

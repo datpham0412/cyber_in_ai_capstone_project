@@ -26,7 +26,7 @@ import numpy as np
 from datasets import load_dataset
 
 import llama
-import cv2
+# import cv2
 import sys
 sys.path.insert(0,'../')
 
@@ -41,6 +41,9 @@ def parse_args():
     parser.add_argument("--gpu_id",type=int,default=0)
     parser.add_argument("--dataset", type=str, default='img_Flickr')
     parser.add_argument("--output_dir", type=str, default="image_MIA")
+    parser.add_argument("--data_path",
+                    default="../VL-MIA-image-arrow",
+                    help="Folder produced by datasets.save_to_disk")
     args = parser.parse_args()
     return args
 
@@ -215,7 +218,20 @@ if __name__ == '__main__':
     model, preprocess = llama.load("LORA-BIAS-7B-v21", llama_dir, llama_type="7B", device=device)
     model.eval()
     
-    dataset = load_dataset("JaineLi/VL-MIA-image", args.dataset, split='train')
+    from datasets import load_from_disk, load_dataset
+    try:
+        obj = load_from_disk(args.data_path)           # Dataset  or  DatasetDict
+        if isinstance(obj, dict) or hasattr(obj, "keys"):
+            dataset = obj["train"]                     # pick the only split
+        else:
+            dataset = obj
+        logging.info(f"Loaded dataset from {args.data_path}")
+    except (FileNotFoundError, OSError):
+        logging.warning("Local copy not found; falling back to Hugging Face")
+        dataset = load_dataset("JaineLi/VL-MIA-image",
+                            args.dataset, split="train")
+    # -----------------------------------------------------------------
+
     data = convert_huggingface_data_to_list_dic(dataset)
 
     output_dir = f"{args.output_dir}/{args.dataset}/gen_{args.num_gen_token}_tokens"
