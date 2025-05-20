@@ -45,3 +45,6 @@ target_models/pretrained/clip-vit-large-patch14-336/*
 
 #vicuna_weights_minigpt
 MiniGPT-4/vicuna_weights/*
+
+#weight
+*.arrow
