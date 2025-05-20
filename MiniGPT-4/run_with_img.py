@@ -259,13 +259,13 @@ if __name__ == '__main__':
 
     dataset = load_from_disk(args.dataset)
     if args.split:
-    dataset = dataset[args.split]
+        dataset = dataset[args.split]
     
     data = convert_huggingface_data_to_list_dic(dataset)
 
     # data = data[:10]
-
-    output_dir = f"{args.output_dir}/{args.dataset}/gen_{args.num_gen_token}_tokens"
+    dataset_name = os.path.basename(args.dataset.rstrip("/"))
+    output_dir = f"{args.output_dir}/{dataset_name}/gen_{args.num_gen_token}_tokens"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     logging.info('=======Initialization Finished=======')
@@ -273,5 +273,15 @@ if __name__ == '__main__':
     text = 'Describe this image in detail.'
 
     all_output = evaluate_data(model, vis_processor, data, text, args.gpu_id, num_gen_token)
+
+
+    #save output
+    output_path = f"{output_dir}/all_output.json"
+    with open(output_path, "w") as f:
+        json.dump(all_output, f, indent=2)
+
+    print(f"Saved all_output to {output_path}")
+
+    
 
     fig_fpr_tpr_img(all_output, output_dir)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define script path
-script="/fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/run_with_img.py"
+script="/fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/MiniGPT-4/run_with_img.py"
 
 # Extract base name without extension for job name
 base_name=$(basename "$script" .py)
@@ -34,7 +34,7 @@ python MiniGPT-4/run_with_img.py  \
   --cfg-path MiniGPT-4/eval_configs/minigpt4_eval_local.yaml \
   --gpu_id 0 \
   --num_gen_token 32 \
-  --dataset /fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/Data/img_Flickr \
+  --dataset /fred/oz402/nhnguyen/Model_PJ/VLLM-MIA/Data/img_dalle \
   --output_dir ./Result
 
 EOT
