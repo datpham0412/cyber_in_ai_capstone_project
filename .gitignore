@@ -48,3 +48,21 @@ MiniGPT-4/vicuna_weights/*
 
 #weight
 *.arrow
+# ------------------- local, never in git -------------------
+VL-MIA-*-arrow*/         # datasets saved_to_disk
+VL-MIA-*-arrow.tgz
+llama_weights/           # 7B base model shards
+CLIP/                    # built wheel dir
+wheels/
+image_MIA/               # results
+text_MIA/
+vlmia_*_*.err            # slurm error logs
+slurm-*.out
+
+# ----- local caches / results ------------------------------------------------
+CLIP/                       
+VL-MIA-image-arrow*/        
+VL-MIA-text-arrow*/         
+llama_weights/              
+llama_adapter_v21/image_MIA/
+llama_adapter_v21/vlmia_*.err
