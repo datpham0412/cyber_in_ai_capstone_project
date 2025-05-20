@@ -66,7 +66,7 @@ logger.info("Logging initialized. Output will be captured in SLURM log.")
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="/fred/oz402/aho/VLLM-MIA/target_models/llava-v1.5-7b")
+    parser.add_argument("--model-path", type=str, default=None)
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--conv-mode", type=str, default=None)
     parser.add_argument("--sep", type=str, default=",")
@@ -75,8 +75,8 @@ def parse_args():
     parser.add_argument("--num_beams", type=int, default=1)
     parser.add_argument("--num_gen_token", type=int, default=32)
     parser.add_argument("--gpu_id",type=int,default=0)
-    parser.add_argument("--dataset", type=str, default='/fred/oz402/aho/VLLM-MIA/Data/img_Flickr')
-    parser.add_argument("--output_dir", type=str, default="/fred/oz402/aho/VLLM-MIA/Result/image_MIA")
+    parser.add_argument("--dataset", type=str, default=None)
+    parser.add_argument("--output_dir", type=str, default="/fred/oz402/nhnguyen/VLLM-MIA/Result/image_MIA")
     parser.add_argument("--severity", type=int, default=6)
     args = parser.parse_args()
     return args

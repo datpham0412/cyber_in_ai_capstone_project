@@ -33,7 +33,7 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
         if 'lora' in model_name.lower() and model_base is not None:
             from llava.model.language_model.llava_llama import LlavaConfig
             lora_cfg_pretrained = LlavaConfig.from_pretrained(model_path)
-            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, local_files_only = True)
             print('Loading LLaVA from base model...')
             model = LlavaLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
             model = model.to(device)
@@ -61,7 +61,7 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             print('Model is loaded...')
         elif model_base is not None:
             print('Loading LLaVA from base model...')
-            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, local_files_only = True)
             cfg_pretrained = AutoConfig.from_pretrained(model_path)
             model = LlavaLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
             model = model.to(device)
@@ -70,12 +70,12 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             mm_projector_weights = {k: v.to(torch.float16) for k, v in mm_projector_weights.items()}
             model.load_state_dict(mm_projector_weights, strict=False)
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, local_files_only = True)
             model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
             model = model.to(device)
     else:
         # Load other models
-        tokenizer = AutoTokenizer.from_pretrained(model_base or model_path, use_fast=False)
+        tokenizer = AutoTokenizer.from_pretrained(model_base or model_path, use_fast=False, local_files_only = True)
         model = AutoModelForCausalLM.from_pretrained(model_base or model_path, low_cpu_mem_usage=True, **kwargs)
         model = model.to(device)
 

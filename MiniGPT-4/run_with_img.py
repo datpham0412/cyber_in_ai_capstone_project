@@ -1,186 +1,119 @@
 import argparse
+import os
+import random
+import glob
+import logging
+import time
+import numpy as np
 import torch
+import torch.backends.cudnn as cudnn
+import torch.nn as nn
+from fastchat import model as fmodel
 
-from llava.constants import (
-    IMAGE_TOKEN_INDEX,
-    DEFAULT_IMAGE_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IM_END_TOKEN,
-    IMAGE_PLACEHOLDER,
-)
-from llava.conversation import conv_templates, SeparatorStyle
-from llava.model.builder import load_pretrained_model
-from llava.utils import disable_torch_init
-from llava.mm_utils import (
-    process_images,
-    tokenizer_image_token,
-    get_model_name_from_path,
-)
+from minigpt4.common.config import Config
+from minigpt4.common.dist_utils import get_rank
+from minigpt4.common.registry import registry
+from minigpt4.conversation.interact import Interact, CONV_VISION_Vicuna0, CONV_VISION_LLama2, StoppingCriteriaSub
 
-import requests
+# imports modules for registration
+from minigpt4.datasets.builders import *
+from minigpt4.models import *
+from minigpt4.processors import *
+from minigpt4.runners import *
+from minigpt4.tasks import *
 from PIL import Image
-from io import BytesIO
-import re
 
 from torchvision.transforms import RandomResizedCrop, RandomRotation, RandomAffine, ColorJitter 
 from scipy.stats import entropy
 import statistics
 
-import torch.nn as nn
+from datasets import load_from_disk
+
+import logging
+logging.basicConfig(level='ERROR')
 import numpy as np
 from pathlib import Path
 import torch
 import zlib
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 import numpy as np
-from datasets import load_from_disk
+from datasets import load_dataset
+
+import sys
+sys.path.insert(0,'/fred/oz402/nhnguyen/Model_PJ/VLLM-MIA')
+from metric_util import get_text_metric, get_img_metric, save_output, convert, get_meta_metrics
 from eval import *
 
-import sys
-# sys.path.insert(0, '../')
-from metric_util import get_text_metric, get_img_metric, save_output, convert, get_meta_metrics
-
-# ======================================================================================================================== #
-
-import logging
-import sys
-
-# Set up logger to output only to stdout (no file)
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-# Clear any default handlers (prevent duplication)
-logger.handlers = []
-
-# Create a single StreamHandler to stdout
-stream_handler = logging.StreamHandler(sys.stdout)
-stream_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] - %(message)s'))
-
-# Add handler to logger
-logger.addHandler(stream_handler)
-
-# Optional: test
-logger.info("Logging initialized. Output will be captured in SLURM log.")
-
-# ======================================================================================================================== #
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="/fred/oz402/aho/VLLM-MIA/target_models/llava-v1.5-7b")
-    parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--conv-mode", type=str, default=None)
-    parser.add_argument("--sep", type=str, default=",")
-    parser.add_argument("--temperature", type=float, default=0)
-    parser.add_argument("--top_p", type=float, default=None)
-    parser.add_argument("--num_beams", type=int, default=1)
+    parser = argparse.ArgumentParser(description="Demo")
+    parser.add_argument("--cfg-path",
+                        default = "eval_configs/minigpt4_eval_local.yaml",
+                        help="path to configuration file.")
     parser.add_argument("--num_gen_token", type=int, default=32)
     parser.add_argument("--gpu_id",type=int,default=0)
-    parser.add_argument("--dataset", type=str, default='/fred/oz402/aho/VLLM-MIA/Data/img_Flickr')
-    parser.add_argument("--output_dir", type=str, default="/fred/oz402/aho/VLLM-MIA/Result/image_MIA")
-    parser.add_argument("--severity", type=int, default=6)
+    parser.add_argument("--dataset", type=str, default='img_Flickr')
+    parser.add_argument("--split", type=str, default=None, help="Dataset split name, e.g. 'train', 'test', or 'validation'")
+    parser.add_argument("--output_dir", type=str, default="image_MIA")
+    parser.add_argument(
+        "--options",
+        nargs="+",
+        help="override some settings in the used config, the key-value pair "
+        "in xxx=yyy format will be merged into config file (deprecate), "
+        "change to --cfg-options instead.",
+    )
     args = parser.parse_args()
     return args
 
 
-def load_image(image_file):
-    if isinstance(image_file, Image.Image):  
-        return image_file.convert("RGB")  
-    
-    if isinstance(image_file, str) and (image_file.startswith("http") or image_file.startswith("https")):
-        # response = requests.get(image_file)
-        # image = Image.open(BytesIO(response.content)).convert("RGB")
-        logger.warning("Internet access detected. Skipping image loading from URL.")
-        return None
-    else:
-        image = Image.open(image_file).convert("RGB")
-    
-    return image
+def generate_text(model, vis_processor, img, text, gpu_id, num_gen_token):
+    chat = Interact(model, vis_processor, device='cuda:{}'.format(gpu_id))
 
+    img_list = []
 
-def load_images(image_files):
-    out = []
-    for image_file in image_files:
-        image = load_image(image_file)
-        out.append(image)
-    return out
+    chat_state = CONV_VISION.copy()
 
-def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_token):
-    qs = text
-    image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-    if IMAGE_PLACEHOLDER in qs:
-        if model.config.mm_use_im_start_end:
-            qs = re.sub(IMAGE_PLACEHOLDER, image_token_se, qs)
-        else:
-            qs = re.sub(IMAGE_PLACEHOLDER, DEFAULT_IMAGE_TOKEN, qs)
-    else:
-        if model.config.mm_use_im_start_end:
-            qs = image_token_se + "\n" + qs
-        else:
-            qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
+    llm_message = chat.upload_img(img, chat_state, img_list)
+    chat.encode_img(img_list)
 
-    conv = conv_templates[conv_mode].copy()
-    conv.append_message(conv.roles[0], qs)
-    conv.append_message(conv.roles[1], None)
-    prompt = conv.get_prompt()
+    chat.ask(text, chat_state)
 
-    images = load_images([img])
-    image_sizes = [x.size for x in images]
-    images_tensor = process_images(
-        images,
-        image_processor,
-        model.config
-    ).to(model.device, dtype=torch.float16)
+    gen_ = chat.get_generate_output(conv=chat_state,
+                                img_list=img_list,
+                                max_new_tokens = num_gen_token,
+                                do_sample=False
+                            )
 
-    input_ids, prompt_chunks = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
-    input_ids = input_ids.unsqueeze(0).cuda(gpu_id)
-
-    with torch.inference_mode():
-        output_ids = model.generate(
-            input_ids,
-            images=images_tensor,
-            image_sizes=image_sizes,
-            do_sample=False,
-            max_new_tokens=num_gen_token,
-            use_cache=True,
-        )
-
-    output_text = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+    output_text = chat.model.llama_tokenizer.decode(gen_[0], skip_special_tokens=True)
 
     return output_text
 
-def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token):
+def evaluate_data(model, vis_processor, test_data, text, gpu_id, num_gen_token):
     print(f"all data size: {len(test_data)}")
     all_output = []
     test_data = test_data
 
-    for idx, ex in enumerate(tqdm(test_data)):
-        description = generate_text(model, image_processor, conv_mode, ex['image'], text, gpu_id, num_gen_token)
+    for ex in tqdm(test_data): 
+
+        description = generate_text(model, vis_processor, ex['image'], text, gpu_id, num_gen_token)
         # description = ''
-        new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id)
+        new_ex = inference(model, vis_processor, ex['image'], text, description, ex, gpu_id)
 
         all_output.append(new_ex)
 
-        if idx % 10 == 0:
-            logger.info(f"Processed {idx+1}/{len(test_data)} samples")
-
     return all_output
 
-def load_conversation_template(model_name):
-    if "llama-2" in model_name.lower():
-        conv_mode = "llava_llama_2"
-    elif "mistral" in model_name.lower():
-        conv_mode = "mistral_instruct"
-    elif "v1.6-34b" in model_name.lower():
-        conv_mode = "chatml_direct"
-    elif "v1" in model_name.lower():
-        conv_mode = "llava_v1"
-    elif "mpt" in model_name.lower():
-        conv_mode = "mpt"
-    else:
-        conv_mode = "llava_v0"
-    return conv_mode
+def load_conversation_template(template_name):
+        conv_template = fmodel.get_conversation_template(template_name)
+        if conv_template.name == 'zero_shot':
+            conv_template.roles = tuple(['### ' + r for r in conv_template.roles])
+            conv_template.sep = '\n'
+        elif conv_template.name == 'llama-2':
+            conv_template.sep2 = conv_template.sep2.strip()
+        return conv_template
 
-def inference(model, vis_processor, conv_mode, img_path, text, description, ex, gpu_id):
+def inference(model, vis_processor, img_path, text, description, ex, gpu_id):
     goal_parts = ['img','inst_desp','inst','desp']
     all_pred = {}
 
@@ -204,13 +137,12 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     
     for part in goal_parts:
         pred = {}
-        metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
-        metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
-        metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
-        metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
-        metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
-
-
+        metrics = mod_infer(model, vis_processor, image, text, description, gpu_id, part)
+        metrics1 = mod_infer(model, vis_processor, aug1, text, description, gpu_id, part)
+        metrics2 = mod_infer(model, vis_processor, aug2, text, description, gpu_id, part)
+        metrics3 = mod_infer(model, vis_processor, aug3, text, description, gpu_id, part)
+        metrics4 = mod_infer(model, vis_processor, aug4, text, description, gpu_id, part)
+        
         aug1_prob = metrics1['log_probs']
         aug2_prob = metrics2['log_probs']
         aug3_prob = metrics3['log_probs']
@@ -234,7 +166,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob,mod_renyi_05, mod_renyi_2)
 
         all_pred[part] = pred
- 
+
     ex["pred"] = all_pred
 
     torch.cuda.empty_cache()
@@ -242,52 +174,40 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     return ex
 
 
-def mod_infer(model, image_processor, conv_mode, img, instruction, description, gpu_id, goal):
+def mod_infer(model, vis_processor, img_path, instruction, description, gpu_id, goal):
     device='cuda:{}'.format(gpu_id)
 
-    qs = instruction
-    # qs = ''
-    image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-    if IMAGE_PLACEHOLDER in qs:
-        if model.config.mm_use_im_start_end:
-            qs = re.sub(IMAGE_PLACEHOLDER, image_token_se, qs)
-        else:
-            qs = re.sub(IMAGE_PLACEHOLDER, DEFAULT_IMAGE_TOKEN, qs)
-    else:
-        if model.config.mm_use_im_start_end:
-            qs = image_token_se + "\n" + qs
-        else:
-            qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
+    chat = Interact(model, vis_processor, device=device)
 
-    conv = conv_templates[conv_mode].copy()
-    conv.append_message(conv.roles[0], qs)
-    conv.append_message(conv.roles[1], description)
-    prompt = conv.get_prompt()[:-4]
+    logging.info('=======Chat established, load images=======')
 
-    images = [img]
-    image_sizes = [x.size for x in images]
-    images_tensor = process_images(
-        images,
-        image_processor,
-        model.config
-    ).to(model.device, dtype=torch.float16)
+    img_list = []
 
-    input_ids, prompt_chunks = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
-    input_ids = input_ids.unsqueeze(0).cuda(gpu_id)
-    with torch.no_grad():
-        outputs = model(
-            input_ids = input_ids,
-            images=images_tensor,
-            image_sizes=image_sizes
-        )
+    chat_state = CONV_VISION.copy()
+
+    llm_message = chat.upload_img(img_path, chat_state, img_list)
+    chat.encode_img(img_list)
+
+    chat.ask(instruction, chat_state)
+
+    chat_state.append_message(chat_state.roles[1], None)
+
+    chat_state.append_message(description, None)
     
-    descp_encoding = tokenizer(description, return_tensors="pt", add_special_tokens = False).to(device).input_ids
+    # print(chat_state.get_prompt())
+
+    outputs, input_ids, seg_tokens = chat.get_output_by_emb(conv=chat_state,
+                                img_list=img_list
+                            )
+    
+    descp_encoding = chat.model.llama_tokenizer(description, return_tensors="pt", add_special_tokens = False).to(chat.device).input_ids
 
     logits = outputs.logits
     goal_slice_dict = {
-        'img' : slice(len(prompt_chunks[0]),-len(prompt_chunks[-1])+1),
-        'inst_desp' : slice(-len(prompt_chunks[-1])+1,None),
-        'inst' : slice(-len(prompt_chunks[-1])+1,-descp_encoding.shape[1]),
+        'img' : slice(seg_tokens[0].shape[1],-seg_tokens[1].shape[1]),
+        # '<img>' : slice(-seg_tokens[-1].shape[1],-seg_tokens[-1].shape[1]+3),
+        'inst_desp' : slice(-seg_tokens[-1].shape[1],None),
+        'inst' : slice(-seg_tokens[-1].shape[1],-descp_encoding.shape[1]),
         'desp' : slice(-descp_encoding.shape[1],None)
         } 
 
@@ -296,10 +216,7 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     max_indices = np.argmax(img_target_np, axis=-1)
     img_max_input_id = torch.from_numpy(max_indices).to(device)
 
-    tensor_a = torch.tensor(prompt_chunks[0]).to(device) if not isinstance(prompt_chunks[0], torch.Tensor) else prompt_chunks[0]
-    tensor_b = torch.tensor(prompt_chunks[-1][1:]).to(device) if not isinstance(prompt_chunks[-1][1:], torch.Tensor) else prompt_chunks[-1][1:]
-
-    mix_input_ids = torch.cat([tensor_a, img_max_input_id, tensor_b], dim=0)
+    mix_input_ids = torch.cat([seg_tokens[0][0], img_max_input_id, seg_tokens[1][0]], dim=0)
 
     target_slice = goal_slice_dict[goal]
 
@@ -317,51 +234,44 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
 # ========================================
 
 if __name__ == '__main__':
-    logger.info(f"Parsing Arguments")
+        
+    conv_dict = {'pretrain_vicuna0': CONV_VISION_Vicuna0,
+            'pretrain_llama2': CONV_VISION_LLama2}
+
+    logging.info('=======Initializing Chat=======')
     args = parse_args()
-    logger.info(f"Parsed Arguments: {args}")
+    cfg = Config(args)
+    # print(args.cfg_path)
+    model_config = cfg.model_cfg
+
+    # print(model_config)
+    model_config.device_8bit = args.gpu_id
+    model_cls = registry.get_model_class(model_config.arch)
+    model = model_cls.from_config(model_config).to('cuda:{}'.format(
+        args.gpu_id))
     num_gen_token = args.num_gen_token
-    dataset = args.dataset
 
-    #For corruption
-    severity = args.severity
+    CONV_VISION = conv_dict[model_config.model_type]
 
-    # Model
-    disable_torch_init()
+    vis_processor_cfg = cfg.datasets_cfg.cc_sbu_align.vis_processor.train
+    vis_processor = registry.get_processor_class(
+        vis_processor_cfg.name).from_config(vis_processor_cfg)
 
-    model_name = get_model_name_from_path(args.model_path)
-    logger.info(f"Model name: {model_name}")
-    
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
-        args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
-    )
-    logger.info(f"Loaded model from {args.model_path}")
-
-    conv_mode = load_conversation_template(model_name)
-
-    if args.conv_mode is not None and conv_mode != args.conv_mode:
-        print(
-            "[WARNING] the auto inferred conversation mode is {}, while `--conv-mode` is {}, using {}".format(
-                conv_mode, args.conv_mode, args.conv_mode
-            )
-        )
-    else:
-        args.conv_mode = conv_mode
-
-    logger.info(f"Loading dataset")
     dataset = load_from_disk(args.dataset)
-    logger.info(f"Loaded dataset from {args.dataset}")
-
+    if args.split:
+    dataset = dataset[args.split]
+    
     data = convert_huggingface_data_to_list_dic(dataset)
 
-    output_dir = f"{args.output_dir}/gen_{num_gen_token}_tokens"
+    # data = data[:10]
+
+    output_dir = f"{args.output_dir}/{args.dataset}/gen_{args.num_gen_token}_tokens"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    logger.info('=======Initialization Finished=======')
+    logging.info('=======Initialization Finished=======')
 
-    text = 'Describe this image concisely.'
+    text = 'Describe this image in detail.'
 
-    logger.info("Starting evaluation...")
-    all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token)
+    all_output = evaluate_data(model, vis_processor, data, text, args.gpu_id, num_gen_token)
 
     fig_fpr_tpr_img(all_output, output_dir)

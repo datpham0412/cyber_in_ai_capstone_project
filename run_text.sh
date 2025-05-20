@@ -15,7 +15,7 @@ sbatch <<EOT
 #SBATCH --ntasks=1                                  # Number of tasks (usually 1 for a single script)
 #SBATCH --cpus-per-task=12                          # Number of CPU cores per task
 #SBATCH --gres=gpu:1                                # Request 1 GPU
-#SBATCH --mem=16G                                   # Memory per node
+#SBATCH --mem=64G                                   # Memory per node
 #SBATCH --time=7:00:00                              # Maximum execution time
 #SBATCH --partition=gpu                             # Submit to GPU partition
 
@@ -30,5 +30,5 @@ mamba activate llava
 cd /fred/oz402/aho/VLLM-MIA
 
 # Run the Python script
-python run_with_text.py --gpu_id 0 --text_len 32 --dataset /fred/oz402/aho/VLLM-MIA/Data/llava_v15_gpt_text
+python MiniGPT-4/run_with_text.py --gpu_id 0 --text_len 32 --dataset /fred/oz402/aho/VLLM-MIA/Data/llava_v15_gpt_text
 EOT
